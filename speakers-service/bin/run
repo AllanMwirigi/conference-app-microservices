@@ -1,0 +1,53 @@
+#!/usr/bin/env node
+
+const axios = require('axios');
+const http = require('http');
+
+const config = require('../config')[process.env.NODE_ENV || 'development'];
+
+const log = config.log();
+const service = require('../server/service')(config);
+
+const server = http.createServer(service);
+
+// Important - a service should not have a fixed port but should randomly choose one
+// server.listen(process.env.PORT || 3000);
+server.listen(0); // nodejs will randomly choose free port
+
+server.on('listening', () => {
+  // register service on startup
+  const registerService = () => axios.put(`http://localhost:3000/register/${config.name}/${config.version}/${server.address().port}`);
+  const unregisterService = () => axios.delete(`http://localhost:3000/register/${config.name}/${config.version}/${server.address().port}`);
+
+  registerService();
+
+  // send heartbeat every 20s to ensure service registry doesn't remove the entry
+  const interval = setInterval(registerService, 20000);
+
+  // unregister service when it exits, will still be removed because of the 30s timeout
+  const cleanup = async () => {
+    clearInterval(interval);
+    await unregisterService();
+  };
+
+  process.on('uncaughtException', async () => {
+    await cleanup();
+    process.exit(0);
+  });
+
+  // ctrl-c
+  process.on('SIGINT', async () => {
+    await cleanup();
+    process.exit(0);
+  });
+
+  // process killed
+  process.on('SIGTERM', async () => {
+    await cleanup();
+    process.exit(0);
+  });
+
+  log.info(
+    `Hi there! I'm listening on port ${server.address().port} in ${service.get('env')} mode.`,
+  );
+});
